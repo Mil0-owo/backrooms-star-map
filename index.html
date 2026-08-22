@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <title>后室层级星图</title>
+    <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            height: 100vh;
+            background: #ffffff;
+            overflow: hidden;
+            font-family: 'Segoe UI', Arial, sans-serif;
+        }
+        #search-container {
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            z-index: 1000;
+            display: flex;
+            gap: 8px;
+        }
+        #search-input {
+            padding: 8px 12px;
+            width: 280px;
+            border-radius: 20px;
+            border: 1px solid #ccc;
+            background: #fafafa;
+            color: #333;
+            font-size: 14px;
+            outline: none;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        #search-input::placeholder {
+            color: #999;
+        }
+        #clear-search {
+            padding: 8px 12px;
+            border-radius: 20px;
+            border: 1px solid #ccc;
+            background: #f0f0f0;
+            color: #333;
+            font-size: 13px;
+            cursor: pointer;
+            outline: none;
+        }
+        #clear-search:hover {
+            background: #e0e0e0;
+        }
+        #network {
+            width: 100vw;
+            height: 100vh;
+            border: none;
+        }
+        .vis-tooltip {
+            background: rgba(255,255,255,0.95) !important;
+            color: #333 !important;
+            border-radius: 5px !important;
+            padding: 6px 10px !important;
+            font-size: 13px !important;
+            border: 1px solid #ccc !important;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+            white-space: pre-line;
+        }
+        #loading {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #666;
+            font-size: 18px;
+            z-index: 2000;
+        }
+    </style>
+</head>
+<body>
+    <div id="search-container">
+        <input type="text" id="search-input" placeholder="搜索层级名称...">
+        <button id="clear-search" onclick="clearSearch()">清除</button>
+    </div>
+    <div id="network"></div>
+    <div id="loading">加载中...</div>
+    <script>
+        fetch('data.json')
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('loading').style.display = 'none';
+                initGraph(data);
+            })
+            .catch(err => {
+                document.getElementById('loading').textContent = '加载失败: ' + err;
+            });
+
+        var network = null;
+        var nodes = null;
+        var edges = null;
+        var clusteringEnabled = true;
+
+        function initGraph(data) {
+            nodes = new vis.DataSet(data.nodes);
+            edges = new vis.DataSet(data.edges);
+
+            var container = document.getElementById('network');
+
+            var options = {
+                nodes: {
+                    shape: 'dot',
+                    borderWidth: 1,
+                    borderWidthSelected: 3,
+                    shadow: false,
+                    font: {
+                        color: '#333333',
+                        size: 11,
+                        face: 'Arial'
+                    },
+                    scaling: {
+                        min: 5,
+                        max: 50,
+                        label: {
+                            enabled: false,
+                            drawThreshold: 0,
+                            min: 0,
+                            max: 100
+                        }
+                    }
+                },
+                edges: {
+                    color: {
+                        color: '#b0b0b0',
+                        highlight: '#666666',
+                        opacity: 0.5
+                    },
+                    width: 1.0,
+                    smooth: {
+                        type: 'continuous',
+                        roundness: 0.1
+                    },
+                    arrows: {
+                        to: { enabled: true, scaleFactor: 0.8 }
+                    }
+                },
+                physics: {
+                    stabilization: { enabled: true, iterations: 200 },
+                    barnesHut: {
+                        gravitationalConstant: -2000,
+                        springConstant: 0.01,
+                        springLength: 750,
+                        damping: 0.4,
+                        centralGravity: 0.03
+                    },
+                    minVelocity: 0.5,
+                    maxVelocity: 20
+                },
+                interaction: {
+                    hover: true,
+                    tooltipDelay: 100,
+                    zoomView: true,
+                    dragView: true,
+                    navigationButtons: true,
+                    keyboard: {
+                        enabled: false
+                    }
+                },
+                clustering: {
+                    enabled: true,
+                    initialMaxNodes: 50,
+                    clusterThreshold: 100,
+                    clusterNodeProperties: {
+                        shape: 'dot',
+                        size: 25,
+                        color: '#ff9800',
+                        borderWidth: 2,
+                        font: { size: 14, color: '#333' }
+                    }
+                }
+            };
+
+            network = new vis.Network(container, data, options);
+
+            network.on("click", function(params) {
+                if (params.nodes.length > 0) {
+                    var nodeId = params.nodes[0];
+                    var url = "https://backrooms-wiki-cn.wikidot.com/" + nodeId;
+                    window.open(url, "_blank");
+                }
+            });
+        }
+
+        // 清除搜索
+        function clearSearch() {
+            document.getElementById('search-input').value = '';
+            if (network && nodes) {
+                // 恢复所有节点正常状态
+                var updatedNodes = [];
+                nodes.forEach(function(node) {
+                    updatedNodes.push({...node, opacity: 1, borderWidth: 1});
+                });
+                nodes.update(updatedNodes);
+                // 重新启用聚类
+                network.setOptions({clustering: {enabled: true}});
+                clusteringEnabled = true;
+            }
+        }
+
+        // 搜索高亮
+        document.getElementById('search-input').addEventListener('input', function() {
+            var keyword = this.value.toLowerCase().trim();
+            if (!network || !nodes) return;
+
+            if (keyword === '') {
+                clearSearch();
+                return;
+            }
+
+            // 先禁用聚类，确保高亮节点可见
+            if (clusteringEnabled) {
+                network.setOptions({clustering: {enabled: false}});
+                clusteringEnabled = false;
+            }
+
+            var matchedNodeIds = [];
+            nodes.forEach(function(node) {
+                if (node.id.toLowerCase().includes(keyword) ||
+                    (node.title && node.title.toLowerCase().includes(keyword)) ||
+                    (node.label && node.label.toLowerCase().includes(keyword))) {
+                    matchedNodeIds.push(node.id);
+                }
+            });
+
+            var updatedNodes = [];
+            nodes.forEach(function(node) {
+                if (matchedNodeIds.includes(node.id)) {
+                    updatedNodes.push({...node, opacity: 1, borderWidth: 4, borderWidthSelected: 4});
+                } else {
+                    updatedNodes.push({...node, opacity: 0.1, borderWidth: 1});
+                }
+            });
+            nodes.update(updatedNodes);
+
+            if (matchedNodeIds.length === 1) {
+                network.focus(matchedNodeIds[0], {scale: 1.2, animation: true});
+            }
+        });
+
+        // 阻止输入框内 + - 等键被 vis 捕获
+        document.getElementById('search-input').addEventListener('keydown', function(e) {
+            if (e.key === '+' || e.key === '-' || e.key === '=') {
+                e.stopPropagation();
+            }
+        });
+    </script>
+</body>
+</html>
